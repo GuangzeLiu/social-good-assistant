@@ -1,0 +1,150 @@
+{
+  "meta": { "country": "Singapore", "last_updated": "2026-01-28" },
+  "entry_points": [
+    {
+      "id": "supportgowhere",
+      "name_en": "SupportGoWhere (LifeSG)",
+      "name_zh": "SupportGoWhere（LifeSG）",
+      "links": ["https://supportgowhere.life.gov.sg/"]
+    },
+    {
+      "id": "sso_comcare",
+      "name_en": "Social Service Office (SSO) + ComCare Hotline",
+      "name_zh": "社会服务办公室（SSO）+ ComCare 热线",
+      "contacts": { "hotline": "1800-222-0000", "email": "Ask_SSO@msf.gov.sg" },
+      "links": ["https://www.msf.gov.sg/what-we-do/comcare"]
+    },
+    {
+      "id": "aic",
+      "name_en": "Agency for Integrated Care (AIC)",
+      "name_zh": "综合护理机构（AIC）",
+      "contacts": { "hotline": "1800-650-6060" },
+      "links": ["https://www.aic.sg/"]
+    }
+  ],
+  "schemes": [
+    {
+      "id": "comcare_smta",
+      "category": "financial_assistance",
+      "name_en": "ComCare Short-to-Medium-Term Assistance (SMTA)",
+      "name_zh": "ComCare 短至中期援助（SMTA）",
+      "summary_en": "Temporary financial support for individuals/families facing difficulties; assessed holistically by SSOs.",
+      "summary_zh": "为面临短期经济困难的个人/家庭提供支持；由 SSO 进行整体评估。",
+      "eligibility_en": ["Holistic assessment (income, savings, family support)."],
+      "eligibility_zh": ["整体评估（收入、储蓄、家庭支持等）。"],
+      "how_to_apply_en": ["Apply via SupportGoWhere or visit the nearest SSO."],
+      "how_to_apply_zh": ["可通过 SupportGoWhere 申请或前往附近 SSO。"],
+      "official_links": [
+        "https://supportgowhere.life.gov.sg/",
+        "https://www.msf.gov.sg/what-we-do/comcare"
+      ]
+    },
+    {
+      "id": "gstv_overview",
+      "category": "financial_assistance",
+      "name_en": "GST Voucher (GSTV) – Overview",
+      "name_zh": "GST Voucher（GSTV）— 总览",
+      "summary_en": "Support package for lower- and middle-income Singaporeans to manage cost-of-living (different components).",
+      "summary_zh": "帮助中低收入人群应对生活成本的支持计划（含不同组成部分）。",
+      "eligibility_en": ["Eligibility differs by component; check official pages."],
+      "eligibility_zh": ["不同组成部分条件不同；以官网为准。"],
+      "how_to_apply_en": ["Some components are automatic; verify instructions on official pages."],
+      "how_to_apply_zh": ["部分项目自动发放；以官网说明为准。"],
+      "official_links": ["https://govbenefits.gov.sg/"]
+    },
+    {
+      "id": "cdc_vouchers",
+      "category": "financial_assistance",
+      "name_en": "CDC Vouchers Scheme",
+      "name_zh": "CDC 购物券计划",
+      "summary_en": "Vouchers for Singaporean households to help with daily expenses at participating merchants/hawkers/supermarkets.",
+      "summary_zh": "为新加坡家庭提供用于日常消费的购物券，可在指定商户/小贩中心/超市使用。",
+      "eligibility_en": ["Singaporean households; details vary by tranche."],
+      "eligibility_zh": ["新加坡家庭；不同批次规则以官网为准。"],
+      "how_to_apply_en": ["Claim via the official CDC vouchers site and follow the steps."],
+      "how_to_apply_zh": ["通过 CDC vouchers 官网领取并按步骤操作。"],
+      "official_links": ["https://vouchers.cdc.gov.sg/"]
+    },
+
+    {
+      "id": "hdb_public_rental",
+      "category": "housing_assistance",
+      "name_en": "HDB Public Rental Scheme",
+      "name_zh": "HDB 公共租赁计划",
+      "summary_en": "Subsidised public rental housing for eligible lower-income households.",
+      "summary_zh": "为符合条件的低收入家庭提供补贴性质公共租赁住房。",
+      "eligibility_en": ["Must meet HDB eligibility criteria (see official pages)."],
+      "eligibility_zh": ["需满足 HDB 资格条件（以官网为准）。"],
+      "how_to_apply_en": ["Apply via HDB e-services and follow the application process."],
+      "how_to_apply_zh": ["通过 HDB 线上入口申请并按流程办理。"],
+      "official_links": ["https://www.hdb.gov.sg/"]
+    },
+    {
+      "id": "transitional_shelter",
+      "category": "housing_assistance",
+      "name_en": "Transitional Shelter (Temporary Accommodation)",
+      "name_zh": "Transitional Shelter（过渡性临时安置）",
+      "summary_en": "Temporary accommodation for homeless families who have exhausted other options.",
+      "summary_zh": "为已无其他住宿选择的无家可归家庭提供临时安置。",
+      "eligibility_en": ["Assessment by service provider is required."],
+      "eligibility_zh": ["需要服务机构评估。"],
+      "how_to_apply_en": ["Start from SupportGoWhere or contact SSO for urgent housing support."],
+      "how_to_apply_zh": ["可从 SupportGoWhere 查询或紧急联系 SSO。"],
+      "official_links": ["https://supportgowhere.life.gov.sg/"]
+    },
+
+    {
+      "id": "chas",
+      "category": "healthcare_support",
+      "name_en": "CHAS (Community Health Assist Scheme)",
+      "name_zh": "CHAS（社区健康援助计划）",
+      "summary_en": "Subsidies for medical/dental care at participating clinics for Singapore Citizens (tiered).",
+      "summary_zh": "为新加坡公民在参与计划的诊所/牙科诊所提供分级补贴。",
+      "eligibility_en": ["Singapore Citizens; tier depends on criteria (see official pages)."],
+      "eligibility_zh": ["新加坡公民；补贴等级取决于条件（以官网为准）。"],
+      "how_to_apply_en": ["Apply online via the CHAS portal."],
+      "how_to_apply_zh": ["通过 CHAS 线上门户申请。"],
+      "official_links": ["https://chas.moh.gov.sg/"]
+    },
+    {
+      "id": "medifund",
+      "category": "healthcare_support",
+      "name_en": "MediFund",
+      "name_zh": "MediFund 医疗援助基金",
+      "summary_en": "Financial assistance for patients who have difficulty paying medical bills; usually via Medical Social Worker.",
+      "summary_zh": "为难以支付医疗账单的患者提供援助；通常通过医疗社工办理。",
+      "eligibility_en": ["Assessed by the institution/Medical Social Worker."],
+      "eligibility_zh": ["由医疗机构/医疗社工评估。"],
+      "how_to_apply_en": ["Ask the Medical Social Worker at the hospital/clinic."],
+      "how_to_apply_zh": ["联系就诊机构的医疗社工。"],
+      "official_links": ["https://www.moh.gov.sg/"]
+    },
+
+    {
+      "id": "silver_support",
+      "category": "elderly_support",
+      "name_en": "Silver Support Scheme",
+      "name_zh": "Silver Support 长者补助计划",
+      "summary_en": "Quarterly cash payouts for eligible low-income elderly; auto-assessed.",
+      "summary_zh": "为符合条件的低收入长者提供按季度发放现金补助；自动评估。",
+      "eligibility_en": ["Singapore Citizen aged 65+; assessed automatically (see official pages)."],
+      "eligibility_zh": ["65+ 新加坡公民；自动评估（以官网为准）。"],
+      "how_to_apply_en": ["No application required (auto-assessed)."],
+      "how_to_apply_zh": ["无需申请（自动评估）。"],
+      "official_links": ["https://www.cpf.gov.sg/"]
+    },
+    {
+      "id": "aic_services",
+      "category": "elderly_support",
+      "name_en": "AIC Care Services (Eldercare & Caregiver Support)",
+      "name_zh": "AIC 照护服务（长者与照护者支持）",
+      "summary_en": "One-stop portal for community care services and caregiver resources.",
+      "summary_zh": "提供社区照护服务与照护者资源的一站式平台。",
+      "eligibility_en": ["Depends on service type and assessment."],
+      "eligibility_zh": ["取决于服务类型与评估。"],
+      "how_to_apply_en": ["Browse services via AIC portal and follow service-specific steps."],
+      "how_to_apply_zh": ["通过 AIC 平台查询服务并按对应流程办理。"],
+      "official_links": ["https://www.aic.sg/"]
+    }
+  ]
+}
