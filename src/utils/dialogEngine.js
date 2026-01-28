@@ -1,295 +1,313 @@
-import KB from "../data/sg_services_kb.json";
+// src/utils/dialogEngine.js
+// Frontend-only dialog + retrieval engine for SG social services KB.
+// Goals:
+// 1) smarter retrieval (keywords + category + fuzzy-ish scoring)
+// 2) guided follow-up questions (slot-like clarification)
+// 3) escalation to human support when low confidence / complex / sensitive / urgent
 
-const normalize = (s) =>
-    (s || "")
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+import kb from "../data/sg_services_kb.json";
 
-const tokenize = (s) => normalize(s).split(" ").filter(Boolean);
+const DEFAULT_TOPK = 3;
 
-/** coarse category hint */
-const KEYWORD_MAP = [
-    { kw: ["financial", "aid", "money", "assistance", "help", "cash", "voucher", "vouchers", "comcare", "wis", "workfare", "gstv", "gst", "cdc"], category: "financial_assistance" },
-    { kw: ["housing", "rent", "rental", "arrears", "tenant", "eviction", "shelter", "homeless", "hdb", "pphs"], category: "housing_assistance" },
-    { kw: ["health", "medical", "clinic", "doctor", "hospital", "chas", "medifund", "medishield", "careshield"], category: "healthcare_support" },
-    { kw: ["elderly", "senior", "silver", "aic", "caregiver", "pioneer", "merdeka"], category: "elderly_support" },
+const STOPWORDS = new Set([
+  "the","a","an","to","for","and","or","of","in","on","at","is","are","am",
+  "i","me","my","we","our","you","your","they","them","this","that",
+  "need","help","please","can","could","want","looking","apply","get",
+  "我","我们","你","你们","需要","想","申请","帮助","怎么","如何","有没有","可以","吗","要","找"
+]);
 
-    { kw: ["经济", "补助", "救助", "现金", "生活费", "购物券", "代金券", "comcare"], category: "financial_assistance" },
-    { kw: ["住房", "租房", "租金", "欠租", "驱逐", "无家可归", "收容所", "hdb"], category: "housing_assistance" },
-    { kw: ["医疗", "看病", "诊所", "住院", "费用", "补贴", "chas", "medifund"], category: "healthcare_support" },
-    { kw: ["长者", "老人", "乐龄", "照护", "护理", "silver", "aic"], category: "elderly_support" }
+const SYNONYMS = [
+  // English -> canonical
+  { re: /\b(financial aid|cash help|money help|bills? help|low income)\b/i, norm: "financial aid" },
+  { re: /\b(housing grant|rental support|rent help|no place to stay|eviction)\b/i, norm: "housing" },
+  { re: /\b(medical help|medical subsidy|clinic subsidy|hospital bill|medifund|chas)\b/i, norm: "medical" },
+  { re: /\b(senior support|elderly|caregiver|home care)\b/i, norm: "senior care" },
+  { re: /\b(disability|wheelchair|assistive|pwd)\b/i, norm: "disability" },
+  { re: /\b(school fees|childcare|preschool|student care|kifas)\b/i, norm: "education" },
+  { re: /\b(job|employment|training|upskill|skillsfuture)\b/i, norm: "employment" },
+  { re: /\b(mental health|anxiety|depression|counselling|suicid)\b/i, norm: "mental" },
+  { re: /\b(legal aid|lawyer|divorce|court)\b/i, norm: "legal" },
+
+  // Chinese -> canonical
+  { re: /(经济援助|现金补助|没钱|生活费|补贴)/, norm: "financial aid" },
+  { re: /(住房|租房|租金补贴|被驱逐|驱逐通知|没地方住|无家可归)/, norm: "housing" },
+  { re: /(看病|医疗|医药费|太贵|补贴|社工|医院账单)/, norm: "medical" },
+  { re: /(长者|老人|照护|护理|照护者|看护)/, norm: "senior care" },
+  { re: /(残障|残疾|轮椅|辅助器材|助听器)/, norm: "disability" },
+  { re: /(学费|幼儿园|托儿|学生托管|课后照护)/, norm: "education" },
+  { re: /(工作|就业|培训|技能|课程补贴)/, norm: "employment" },
+  { re: /(心理|抑郁|焦虑|想不开|自杀|辅导)/, norm: "mental" },
+  { re: /(法律援助|离婚|律师|法庭)/, norm: "legal" }
 ];
 
-const SYN = {
-    eviction: ["notice", "kicked", "homeless", "shelter"],
-    rent: ["rental", "arrears", "tenant"],
-    hdb: ["public rental", "flat", "housing"],
-    medical: ["health", "clinic", "doctor", "hospital"],
-    chas: ["gp", "dental", "subsidy"],
-    medifund: ["bill", "unable to pay", "financial assistance"],
-    comcare: ["assistance", "aid", "help", "cash"],
-    workfare: ["wis", "low wage", "cpf"],
-    elderly: ["senior", "silver", "aic", "caregiver"],
+const SENSITIVE_TRIGGERS = [
+  /\b(suicide|kill myself|self-harm)\b/i,
+  /(自杀|轻生|想不开|伤害自己)/
+];
 
-    住房: ["租房", "租金", "驱逐", "欠租", "无家可归", "收容所"],
-    医疗: ["看病", "诊所", "补贴", "住院", "费用"],
-    经济: ["补助", "救助", "现金", "生活费"],
-    长者: ["老人", "乐龄", "护理", "照护"]
-};
+const URGENT_TRIGGERS = [
+  /\b(no place to stay today|sleeping outside|evicted|urgent|emergency)\b/i,
+  /(今天没地方住|今晚没地方睡|紧急|急需|被赶出来|露宿)/
+];
 
-function expandTokens(tokens) {
-    const set = new Set(tokens);
-    for (const t of tokens) {
-        if (SYN[t]) SYN[t].forEach((x) => set.add(normalize(x)));
-    }
-    return Array.from(set).filter(Boolean);
+// --- helpers ---
+function normalizeText(raw = "") {
+  let t = raw.trim();
+  for (const s of SYNONYMS) t = t.replace(s.re, s.norm);
+  return t;
 }
 
-export function detectCategory(text) {
-    const q = normalize(text);
-    for (const m of KEYWORD_MAP) {
-        if (m.kw.some((k) => q.includes(normalize(k)))) return m.category;
-    }
-    return null;
+function tokenize(raw = "") {
+  const t = normalizeText(raw)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ");
+  const parts = t.split(/\s+/).filter(Boolean);
+  return parts.filter(w => !STOPWORDS.has(w));
 }
 
-export function detectSensitive(text) {
-    const q = normalize(text);
-    const triggers = [
-        "homeless", "unsafe", "abuse", "harm", "suicide", "eviction", "urgent", "emergency",
-        "无家可归", "危险", "家暴", "自残", "轻生", "驱逐", "紧急", "今天没地方住"
-    ];
-    return triggers.some((k) => q.includes(normalize(k)));
+function containsAny(raw, regexList) {
+  return regexList.some(re => re.test(raw));
 }
 
-function schemeText(s) {
-    const parts = [
-        s.name_en, s.name_zh,
-        s.summary_en, s.summary_zh,
-        ...(s.eligibility_en || []), ...(s.eligibility_zh || []),
-        ...(s.how_to_apply_en || []), ...(s.how_to_apply_zh || []),
-        ...(s.official_links || [])
-    ];
-    return normalize(parts.filter(Boolean).join(" "));
+function langPick(lang, en, zh) {
+  return lang === "zh" ? (zh || en) : (en || zh);
 }
 
-function intentBoost(tokens) {
-    const tset = new Set(tokens);
-    const boosts = {
-        housing_assistance: 0,
-        healthcare_support: 0,
-        financial_assistance: 0,
-        elderly_support: 0
-    };
-    const add = (cat, v) => (boosts[cat] += v);
-
-    // housing urgency
-    if (tset.has("eviction") || tset.has("驱逐") || tset.has("homeless") || tset.has("无家可归") || tset.has("shelter") || tset.has("收容所")) add("housing_assistance", 3.0);
-    if (tset.has("arrears") || tset.has("欠租")) add("housing_assistance", 2.0);
-
-    // healthcare
-    if (tset.has("chas")) add("healthcare_support", 2.0);
-    if (tset.has("medifund")) add("healthcare_support", 2.0);
-    if (tset.has("hospital") || tset.has("住院")) add("healthcare_support", 1.5);
-
-    // financial
-    if (tset.has("comcare")) add("financial_assistance", 2.0);
-    if (tset.has("wis") || tset.has("workfare")) add("financial_assistance", 1.5);
-    if (tset.has("voucher") || tset.has("vouchers") || tset.has("购物券") || tset.has("代金券")) add("financial_assistance", 1.0);
-
-    // elderly
-    if (tset.has("elderly") || tset.has("长者") || tset.has("silver")) add("elderly_support", 2.0);
-    if (tset.has("caregiver") || tset.has("照护") || tset.has("护理")) add("elderly_support", 1.5);
-
-    return boosts;
+function schemeTextForMatch(s) {
+  // combine fields for scoring
+  const all = [
+    s.name_en, s.name_zh,
+    s.summary_en, s.summary_zh,
+    ...(s.keywords_en || []),
+    ...(s.keywords_zh || []),
+    ...(s.eligibility_en || []),
+    ...(s.eligibility_zh || [])
+  ].filter(Boolean).join(" ");
+  return normalizeText(all).toLowerCase();
 }
 
-function scoreScheme(queryTokens, scheme, hintedCategory) {
-    const text = schemeText(scheme);
-    let score = 0;
+function scoreScheme(queryTokens, scheme, intentHint = null) {
+  const hay = schemeTextForMatch(scheme);
+  let score = 0;
 
-    // token overlap
-    for (const tok of queryTokens) {
-        if (!tok) continue;
-        if (text.includes(tok)) score += 1.0;
-    }
+  // token hits
+  for (const tok of queryTokens) {
+    if (hay.includes(tok)) score += 3;
+  }
 
-    // title boost
-    const title = normalize(`${scheme.name_en || ""} ${scheme.name_zh || ""}`);
-    for (const tok of queryTokens) {
-        if (title.includes(tok)) score += 1.2;
-    }
+  // intent/category boost
+  if (intentHint && scheme.category === intentHint) score += 6;
 
-    // category hint
-    if (hintedCategory && scheme.category === hintedCategory) score += 1.0;
+  // keyword exact boost
+  for (const k of (scheme.keywords_en || [])) {
+    const kk = normalizeText(k).toLowerCase();
+    if (queryTokens.some(t => kk.includes(t) || t.includes(kk))) score += 2;
+  }
+  for (const k of (scheme.keywords_zh || [])) {
+    const kk = normalizeText(k).toLowerCase();
+    if (queryTokens.some(t => kk.includes(t) || t.includes(kk))) score += 2;
+  }
 
-    // intent boost
-    score += (intentBoost(queryTokens)[scheme.category] || 0);
-
-    return score;
+  return score;
 }
 
-function searchSchemesSmart(userText, hintedCategory, topK = 5) {
-    const baseTokens = tokenize(userText);
-    const tokens = expandTokens(baseTokens);
-
-    const schemes = Array.isArray(KB?.schemes) ? KB.schemes : [];
-    const scored = schemes
-        .map((s) => ({ s, score: scoreScheme(tokens, s, hintedCategory) }))
-        .filter((x) => x.score > 0.6)
-        .sort((a, b) => b.score - a.score);
-
-    return scored.slice(0, topK).map((x) => x.s);
+function detectIntent(raw) {
+  const t = normalizeText(raw);
+  // ordered: urgent housing > mental > financial > medical > etc.
+  if (/housing/.test(t) || /eviction/.test(t)) return "housing_assistance";
+  if (/mental/.test(t)) return "mental_health_support";
+  if (/financial aid/.test(t) || /comcare/.test(t) || /assurance/.test(t) || /gstv/.test(t)) return "financial_assistance";
+  if (/medical/.test(t) || /chas/.test(t) || /medifund/.test(t)) return "healthcare_support";
+  if (/senior care/.test(t)) return "elderly_support";
+  if (/disability/.test(t) || /pwd/.test(t)) return "disability_support";
+  if (/education/.test(t) || /childcare/.test(t)) return "education_support";
+  if (/employment/.test(t) || /skillsfuture/.test(t) || /job/.test(t)) return "employment_support";
+  if (/legal/.test(t)) return "legal_support";
+  return null;
 }
 
-function formatFallbackHint(lang) {
-    const ep = Array.isArray(KB?.entry_points) ? KB.entry_points : [];
-    const support = ep.find((x) => x.id === "supportgowhere");
-    const sso = ep.find((x) => x.id === "sso_comcare");
+function topSchemes(raw, lang, topK = DEFAULT_TOPK) {
+  const tokens = tokenize(raw);
+  const intent = detectIntent(raw);
+  const scored = kb.schemes
+    .map(s => ({ s, score: scoreScheme(tokens, s, intent) }))
+    .sort((a, b) => b.score - a.score);
 
-    if (lang === "zh") {
-        const lines = [
-            "我没找到足够匹配的具体方案。你可以先从这些官方入口开始：",
-            support?.links?.[0] ? `- SupportGoWhere：${support.links[0]}` : null,
-            sso?.links?.[0] ? `- SSO / ComCare：${sso.links[0]}` : null,
-            sso?.contacts?.hotline ? `- ComCare 热线：${sso.contacts.hotline}` : null,
-            sso?.contacts?.email ? `- 邮箱：${sso.contacts.email}` : null
-        ].filter(Boolean);
-        return "\n\n" + lines.join("\n");
-    }
+  const best = scored.slice(0, topK);
+  const bestScore = best[0]?.score ?? 0;
 
-    const lines = [
-        "I couldn’t find a high-confidence match. Start from these official entry points:",
-        support?.links?.[0] ? `- SupportGoWhere: ${support.links[0]}` : null,
-        sso?.links?.[0] ? `- SSO / ComCare: ${sso.links[0]}` : null,
-        sso?.contacts?.hotline ? `- ComCare Hotline: ${sso.contacts.hotline}` : null,
-        sso?.contacts?.email ? `- Email: ${sso.contacts.email}` : null
-    ].filter(Boolean);
-    return "\n\n" + lines.join("\n");
+  // confidence heuristic:
+  // if top score too low, treat as low confidence
+  const lowConfidence = bestScore < 6;
+
+  return { intent, tokens, best: best.map(x => x.s), lowConfidence };
 }
 
-/**
- * start -> ask_audience -> ask_urgency -> ask_docs -> done
- */
-export function nextTurn({ lang, state, userText }) {
-    const q = (userText || "").trim();
-    const sensitive = detectSensitive(q);
-    const step = state?.step ?? "start";
+function formatSchemeCard(s, lang) {
+  const name = langPick(lang, s.name_en, s.name_zh);
+  const summary = langPick(lang, s.summary_en, s.summary_zh);
+  const elig = langPick(lang, (s.eligibility_en || []).join(" "), (s.eligibility_zh || []).join(" "));
+  const how = langPick(lang, (s.how_to_apply_en || []).join(" "), (s.how_to_apply_zh || []).join(" "));
+  const links = (s.official_links || []).slice(0, 3);
 
-    if (step === "start") {
-        const category = detectCategory(q);
+  return {
+    id: s.id,
+    title: name,
+    summary,
+    eligibility: elig,
+    how_to_apply: how,
+    links
+  };
+}
 
-        // if no category, try smart search anyway
-        if (!category) {
-            const pre = searchSchemesSmart(q, null, 3);
-            if (pre.length > 0) {
-                const ask =
-                    lang === "zh"
-                        ? "我初步找到一些可能相关的方案。为了更准确匹配，我问你 3 个问题：\n1) 你属于哪类人群？（长者 / 低收入家庭 / 其他）"
-                        : "I found a few potentially relevant schemes. To be more accurate, I’ll ask 3 quick questions:\n1) Which group best describes you? (elderly / low-income family / other)";
-                return {
-                    reply: ask,
-                    patch: { step: "ask_audience", category: null, preQuery: q },
-                    recommendations: [],
-                    sensitiveSuggested: sensitive
-                };
-            }
+function followUpQuestions(intent, lang) {
+  // keep questions lightweight & non-invasive; avoid collecting sensitive personal data.
+  const commonTail = lang === "zh"
+    ? "你也可以直接输入另一个关键词（如：医疗 / 住房 / 教育 / 残障 / 法律）。"
+    : "You can also type a new keyword (e.g., medical / housing / education / disability / legal).";
 
-            const msg =
-                lang === "zh"
-                    ? "你可以输入简单关键词开始，例如：经济援助、住房补助、医疗补贴、长者支持。\n\n我会通过几个追问给出简化指引，并在必要时建议转人工。"
-                    : 'Type a simple keyword to start, e.g., "financial aid", "housing grant", "medical subsidy", "support for seniors".\n\nI’ll ask a few questions, explain in plain language, and suggest human escalation when needed.';
-            return { reply: msg, patch: { step: "start" }, recommendations: [], sensitiveSuggested: sensitive };
-        }
+  switch (intent) {
+    case "housing_assistance":
+      return lang === "zh"
+        ? [
+            "你是“今天/今晚没地方住”这种紧急情况吗？（是/否）",
+            "你更需要：临时安置（shelter）还是长期租房/租金支持？",
+            commonTail
+          ]
+        : [
+            "Is this urgent (no place to stay today/tonight)? (yes/no)",
+            "Do you need temporary shelter or longer-term rental support?",
+            commonTail
+          ];
+    case "financial_assistance":
+      return lang === "zh"
+        ? [
+            "你主要想解决：生活费/食物、账单、还是短期现金周转？",
+            "你是否已经联系过 SSO/ComCare？如果没有，我建议从那里开始。",
+            commonTail
+          ]
+        : [
+            "Which is your main need: daily expenses/food, bills, or short-term cash?",
+            "Have you contacted SSO/ComCare? If not, that’s usually the best first step.",
+            commonTail
+          ];
+    case "healthcare_support":
+      return lang === "zh"
+        ? [
+            "你是想要：诊所/门诊补贴（如 CHAS）还是医院账单减免（可找医疗社工/MediFund）？",
+            "你现在是在公立医院/诊所就诊吗？（不同路径会不一样）",
+            commonTail
+          ]
+        : [
+            "Do you need clinic/outpatient subsidies (e.g., CHAS) or help with a hospital bill (via Medical Social Worker/MediFund)?",
+            "Are you receiving care at a public hospital/clinic? (The route may differ.)",
+            commonTail
+          ];
+    case "elderly_support":
+      return lang === "zh"
+        ? [
+            "你需要的是：现金补助、日常照护服务，还是照护者资源？",
+            "是否需要我把 AIC 的‘照护服务入口’给你作为下一步？",
+            commonTail
+          ]
+        : [
+            "Do you need cash support, care services, or caregiver resources?",
+            "Should I point you to AIC’s care services entry point as the next step?",
+            commonTail
+          ];
+    case "mental_health_support":
+      return lang === "zh"
+        ? [
+            "你是想要匿名倾诉/咨询，还是需要专业转介？",
+            "如果你现在处于危险或有自伤想法，请立刻求助紧急服务或联系 1771。",
+            commonTail
+          ]
+        : [
+            "Are you looking for anonymous support, or professional referral?",
+            "If you’re in immediate danger or thinking about self-harm, seek emergency help right now or contact 1771.",
+            commonTail
+          ];
+    default:
+      return lang === "zh"
+        ? [
+            "你更关心哪一类：经济援助 / 住房 / 医疗 / 长者 / 残障 / 教育 / 就业 / 法律？",
+            commonTail
+          ]
+        : [
+            "Which area is closest: financial / housing / medical / seniors / disability / education / employment / legal?",
+            commonTail
+          ];
+  }
+}
 
-        const ask =
-            lang === "zh"
-                ? "好的。我问你 3 个简单问题来更精准匹配：\n1) 你属于哪类人群？（长者 / 低收入家庭 / 其他）"
-                : "Got it. I’ll ask 3 quick questions to narrow down:\n1) Which group best describes you? (elderly / low-income family / other)";
-        return {
-            reply: ask,
-            patch: { step: "ask_audience", category, preQuery: q },
-            recommendations: [],
-            sensitiveSuggested: sensitive
-        };
-    }
-
-    if (step === "ask_audience") {
-        const audience = q;
-        const ask =
-            lang === "zh"
-                ? "2) 是否紧急？（例如：收到驱逐通知 / 今天没地方住 / 否）"
-                : "2) Is it urgent? (e.g., eviction notice / no place to stay today / not urgent)";
-        return {
-            reply: ask,
-            patch: { step: "ask_urgency", profile: { ...(state.profile || {}), audience } },
-            recommendations: [],
-            sensitiveSuggested: sensitive
-        };
-    }
-
-    if (step === "ask_urgency") {
-        const urgency = q;
-        const ask =
-            lang === "zh"
-                ? "3) 你目前有哪些材料？（身份证明/住址证明/收入证明/都没有）"
-                : "3) What documents do you have? (ID / proof of address / proof of income / none)";
-        return {
-            reply: ask,
-            patch: { step: "ask_docs", profile: { ...(state.profile || {}), urgency } },
-            recommendations: [],
-            sensitiveSuggested: sensitive
-        };
-    }
-
-    if (step === "ask_docs") {
-        const docs = q;
-        const profile = { ...(state.profile || {}), docs };
-
-        const query = [
-            state.preQuery || "",
-            state.category || "",
-            profile.audience || "",
-            profile.urgency || "",
-            profile.docs || ""
-        ].join(" ").trim();
-
-        const hintedCategory = state.category || detectCategory(query) || null;
-        const recs = searchSchemesSmart(query, hintedCategory, 5);
-
-        const header =
-            lang === "zh"
-                ? "谢谢。以下是与你需求最相关的方案（基于官方信息整理），并附上简化申请指引与官方链接："
-                : "Thanks. Here are the most relevant schemes (compiled from official sources), with simplified steps and official links:";
-
-        const sensitiveHint =
-            sensitive
-                ? lang === "zh"
-                    ? "\n\n⚠️ 你的情况可能紧急/敏感，建议点击右上角“转人工支持”。"
-                    : "\n\n⚠️ This may be urgent/sensitive. Consider clicking “Escalate to human”."
-                : "";
-
-        const fallback = recs.length === 0 ? formatFallbackHint(lang) : "";
-
-        return {
-            reply: header + sensitiveHint + fallback,
-            patch: { step: "done", profile, category: hintedCategory },
-            recommendations: recs,
-            sensitiveSuggested: sensitive
-        };
-    }
-
-    const msg =
-        lang === "zh"
-            ? "如果你还想了解其他服务类型，请输入新的关键词（例如：经济援助 / 住房补助 / 医疗补贴 / 长者支持）。"
-            : 'If you want another service type, type a new keyword (e.g., "financial aid", "housing grant", "medical help", "support for seniors").';
-
+// Public API: one-step respond (stateless). You can add state later if you want multi-turn slots.
+export function generateAssistantReply({ userText, lang = "en" }) {
+  const raw = (userText || "").trim();
+  if (!raw) {
     return {
-        replyKey: "resetHint",
-        patch: { step: "start", category: null, profile: {}, preQuery: "" },
-        recommendations: [],
-        sensitiveSuggested: sensitive
+      replyText: lang === "zh"
+        ? "请输入一个关键词（例如：经济援助 / 住房补贴 / 医疗补助 / 长者照护）。"
+        : 'Type a keyword (e.g., "financial aid", "housing grant", "medical help", "support for seniors").',
+      cards: [],
+      followUps: []
     };
+  }
+
+  // sensitive / urgent handling first
+  const isSensitive = containsAny(raw, SENSITIVE_TRIGGERS);
+  const isUrgent = containsAny(raw, URGENT_TRIGGERS);
+
+  const { intent, best, lowConfidence } = topSchemes(raw, lang, DEFAULT_TOPK);
+
+  // prepare cards
+  const cards = best.map(s => formatSchemeCard(s, lang));
+
+  // base response
+  let replyText = "";
+  if (isSensitive) {
+    replyText = lang === "zh"
+      ? "我可以先提供支持资源与下一步入口。若你现在有自伤/他伤风险或处在危险中，请立刻联系紧急服务（如 999）或拨打 national mindline 1771（24/7）。如果更合适，也建议尽快转人工社工/专业人员。"
+      : "I can share support resources and next-step entry points. If you’re in immediate danger or at risk of self-harm, call emergency services (e.g., 999) or contact national mindline 1771 (24/7). You may also want to escalate to a human professional.";
+    // force include mindline as an entry point card
+    cards.unshift({
+      id: "mindline_1771",
+      title: lang === "zh" ? "national mindline 1771（24/7 心理支持）" : "national mindline 1771 (24/7 mental health support)",
+      summary: lang === "zh" ? "24/7 心理支持热线/文字服务与网页聊天。" : "24/7 helpline/textline and webchat for mental health support.",
+      eligibility: lang === "zh" ? "通常可直接使用。" : "Open access.",
+      how_to_apply: lang === "zh" ? "拨打 1771 或使用 mindline.sg 网页聊天。" : "Call 1771 or use mindline.sg webchat.",
+      links: ["https://www.mindline.sg/"]
+    });
+    return {
+      replyText,
+      cards,
+      followUps: followUpQuestions("mental_health_support", lang),
+      escalation: { recommended: true, reason: "sensitive" }
+    };
+  }
+
+  if (isUrgent) {
+    replyText = lang === "zh"
+      ? "看起来情况比较紧急（例如今天/今晚没地方住）。建议你优先联系 SSO/ComCare（1800-222-0000）或通过 SupportGoWhere 查找最近的安置与支援入口。如果你愿意，你可以回复“是/否：今天没地方住”，我再把建议细化成更可执行的步骤。"
+      : "This sounds urgent (e.g., no place to stay today/tonight). Consider contacting SSO/ComCare (1800-222-0000) or use SupportGoWhere to find nearby shelter/support. If you reply yes/no to ‘no place to stay today’, I can tailor the next steps.";
+  } else if (lowConfidence) {
+    replyText = lang === "zh"
+      ? "我可能还不够确定你想找哪一类支持。你可以选一个方向：经济援助 / 住房 / 医疗 / 长者 / 残障 / 教育 / 就业 / 法律。也可以直接说一句更具体的需求（例如：‘我付不起医药费’）。"
+      : "I’m not fully sure which area you need. Pick one: financial / housing / medical / seniors / disability / education / employment / legal — or describe your situation briefly (e.g., ‘I can’t afford medical bills’).";
+  } else {
+    replyText = lang === "zh"
+      ? "根据你的关键词，我先给你最相关的几个官方支持方案（简化版步骤），你可以再回答下面的问题，我会继续把建议细化。"
+      : "Based on your keywords, here are the most relevant official schemes (simplified steps). Answer the follow-up questions and I’ll refine the guidance further.";
+  }
+
+  // escalation suggestion when low confidence
+  const escalation = lowConfidence
+    ? { recommended: true, reason: "low_confidence", entryPoints: kb.entry_points }
+    : { recommended: false };
+
+  return {
+    replyText,
+    cards,
+    followUps: followUpQuestions(intent, lang),
+    escalation
+  };
 }
