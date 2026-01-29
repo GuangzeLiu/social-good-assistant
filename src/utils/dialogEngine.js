@@ -5,10 +5,10 @@
 // - Be tolerant of free-form input: detect domain from natural text, soft-guess domain if needed
 // - More empathetic, caring tone while staying factual
 
-
 import kb from "../data/sg_services_kb.json";
 
-const DEFAULT_TOPK = 3;
+const DEFAULT_PAGE_SIZE = 3;
+const MAX_MATCHES_CAP = 50; // safety cap (avoid huge payloads)
 
 const STOPWORDS = new Set([
   "the","a","an","to","for","and","or","of","in","on","at","is","are","am",
@@ -188,20 +188,23 @@ function scoreScheme(queryTokens, scheme, categoryBoost = null) {
   return score;
 }
 
-function retrieveSchemes({ query, domainId, topK = DEFAULT_TOPK }) {
+/**
+ * Return all matched schemes (sorted, score>0) up to MAX_MATCHES_CAP.
+ * We paginate on top of this to avoid duplicates.
+ */
+function retrieveAllSchemes({ query, domainId }) {
   const d = domainById(domainId);
   const tokens = tokenize(query);
+
   const scored = kb.schemes
       .map(s => ({ s, score: scoreScheme(tokens, s, d?.cat || null) }))
       .sort((a, b) => b.score - a.score);
 
-  const best = scored.filter(x => x.score > 0).slice(0, topK).map(x => x.s);
+  const matched = scored.filter(x => x.score > 0).slice(0, MAX_MATCHES_CAP);
   const bestScore = scored[0]?.score ?? 0;
-
-  // be more tolerant for free-form
   const lowConfidence = bestScore < 5;
 
-  return { best, lowConfidence, tokens, bestScore };
+  return { matched, lowConfidence, bestScore };
 }
 
 function formatScheme(s, lang, focus = "overview") {
@@ -243,6 +246,18 @@ function baseNavQuickReplies(lang) {
   ]);
 }
 
+function endQuickReply(lang) {
+  return makeQuickReplies([
+    { id: "end", label: lang === "zh" ? "结束" : "End", action: { type: "END" } }
+  ])[0];
+}
+
+function escalateQuickReply(lang) {
+  return makeQuickReplies([
+    { id: "escalate", label: lang === "zh" ? "转人工" : "Talk to a human", action: { type: "ESCALATE" } }
+  ])[0];
+}
+
 function topicQuickReplies(lang) {
   const topics = DOMAIN.map(d => ({
     id: `topic_${d.id}`,
@@ -254,6 +269,12 @@ function topicQuickReplies(lang) {
     label: lang === "zh" ? "我现在很紧急" : "This is urgent",
     action: { type: "URGENT" }
   });
+  // add end at the bottom
+  topics.push({
+    id: "end",
+    label: lang === "zh" ? "结束" : "End",
+    action: { type: "END" }
+  });
   return makeQuickReplies(topics);
 }
 
@@ -262,7 +283,8 @@ function focusQuickReplies(lang) {
     { id: "overview", label: lang === "zh" ? "先看概览" : "Overview", action: { type: "SET_FOCUS", focus: "overview" } },
     { id: "eligibility", label: lang === "zh" ? "我想看资格" : "Eligibility", action: { type: "SET_FOCUS", focus: "eligibility" } },
     { id: "steps", label: lang === "zh" ? "我想看申请步骤" : "How to apply", action: { type: "SET_FOCUS", focus: "steps" } },
-    ...baseNavQuickReplies(lang)
+    ...baseNavQuickReplies(lang),
+    endQuickReply(lang)
   ]);
 }
 
@@ -323,50 +345,191 @@ function domainPresets(domainId, lang) {
         { id: "daily", label: zh ? "日常生活费/食物" : "Daily expenses / food", action: { type: "ADD_QUERY", text: zh ? "生活费 食物" : "daily expenses food" } },
         { id: "bills", label: zh ? "账单/水电费" : "Bills / utilities", action: { type: "ADD_QUERY", text: zh ? "账单 水电费" : "bills utilities" } },
         { id: "rent", label: zh ? "租金压力" : "Rent problems", action: { type: "ADD_QUERY", text: zh ? "租金" : "rent" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     case "housing":
       return makeQuickReplies([
         { id: "no_place", label: zh ? "今天没地方住" : "No place to stay today", action: { type: "URGENT" } },
         { id: "rental", label: zh ? "公共租赁/租房" : "Public rental / renting", action: { type: "ADD_QUERY", text: zh ? "公共租赁 租房" : "public rental" } },
         { id: "temp", label: zh ? "过渡/临时安置" : "Temporary shelter", action: { type: "ADD_QUERY", text: zh ? "临时安置 shelter" : "temporary shelter" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     case "healthcare":
       return makeQuickReplies([
         { id: "clinic", label: zh ? "诊所/门诊补贴" : "Clinic/outpatient subsidy", action: { type: "ADD_QUERY", text: zh ? "CHAS 门诊 诊所" : "CHAS clinic outpatient" } },
         { id: "hospital", label: zh ? "医院账单付不起" : "Can't afford hospital bill", action: { type: "ADD_QUERY", text: zh ? "医院账单 付不起 MediFund" : "hospital bill MediFund" } },
         { id: "insurance", label: zh ? "保险/保费" : "Insurance / premiums", action: { type: "ADD_QUERY", text: zh ? "MediShield Life 保费" : "MediShield Life premiums" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     case "seniors":
       return makeQuickReplies([
         { id: "cash", label: zh ? "现金补助" : "Cash support", action: { type: "ADD_QUERY", text: zh ? "现金补助 Silver Support" : "cash support Silver Support" } },
         { id: "care", label: zh ? "照护服务" : "Care services", action: { type: "ADD_QUERY", text: zh ? "照护服务 AIC" : "care services AIC" } },
         { id: "caregiver", label: zh ? "照护者资源" : "Caregiver support", action: { type: "ADD_QUERY", text: zh ? "照护者 支持" : "caregiver support" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     case "disability":
       return makeQuickReplies([
         { id: "assistive", label: zh ? "辅助器材补贴" : "Assistive tech subsidy", action: { type: "ADD_QUERY", text: zh ? "辅助器材 ATF" : "assistive technology fund ATF" } },
         { id: "jobs", label: zh ? "就业支持" : "Employment support", action: { type: "ADD_QUERY", text: zh ? "残障 就业" : "disability employment" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     case "legal":
       return makeQuickReplies([
         { id: "legal_aid", label: zh ? "法律援助申请" : "Apply for legal aid", action: { type: "ADD_QUERY", text: zh ? "法律援助 LAB" : "legal aid LAB" } },
         { id: "family", label: zh ? "家庭/离婚" : "Family/divorce", action: { type: "ADD_QUERY", text: zh ? "离婚 家庭" : "divorce family law" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     case "mental":
       return makeQuickReplies([
         { id: "talk", label: zh ? "想找人聊聊" : "I need someone to talk to", action: { type: "ADD_QUERY", text: zh ? "心理支持 倾诉" : "mental health support talk" } },
         { id: "urgent_mental", label: zh ? "我很危险/想伤害自己" : "I'm in danger / self-harm thoughts", action: { type: "SENSITIVE" } },
-        ...baseNavQuickReplies(lang)
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
       ]);
     default:
-      return baseNavQuickReplies(lang);
+      return makeQuickReplies([
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
+      ]);
   }
+}
+
+function noMoreResultsMessage(lang, domainId) {
+  const zh = lang === "zh";
+  const text = zh
+      ? "我这边已经没有更多匹配结果了。\n\n如果你希望进一步确认适用方案或需要更个性化的协助，可以选择“转人工”。"
+      : "I don’t have more matched results to show.\n\nIf you need more tailored help or want to confirm what applies to you, you can choose “Talk to a human”.";
+
+  return {
+    role: "assistant",
+    text,
+    cards: [],
+    quickReplies: makeQuickReplies([
+      { id: "escalate", label: zh ? "转人工" : "Talk to a human", action: { type: "ESCALATE" } },
+      ...baseNavQuickReplies(lang),
+      endQuickReply(lang)
+    ])
+  };
+}
+
+function endConversationMessage(lang) {
+  const zh = lang === "zh";
+  const text = zh
+      ? "希望我提供的信息能帮助到您。\n\n如果之后还需要我协助，你随时可以点击“重新开始”或“返回主题”。"
+      : "I hope the information I shared was helpful.\n\nIf you need help later, you can always tap “Restart” or “Back to topics”.";
+
+  return {
+    role: "assistant",
+    text,
+    cards: [],
+    quickReplies: makeQuickReplies([
+      { id: "back_topics", label: zh ? "返回主题" : "Back to topics", action: { type: "BACK_TOPICS" } },
+      { id: "restart", label: zh ? "重新开始" : "Restart", action: { type: "RESTART" } }
+    ])
+  };
+}
+
+/**
+ * Build results for the *current page* (offset/pageSize).
+ * No duplication: "More results" moves offset forward.
+ */
+function buildResultsMessage({ lang, domainId, focus, query, offset, pageSize }) {
+  const zh = lang === "zh";
+  const domain = domainById(domainId);
+
+  const { matched, lowConfidence } = retrieveAllSchemes({ query, domainId });
+  const total = matched.length;
+
+  if (!total) {
+    return {
+      role: "assistant",
+      text: zh
+          ? "我暂时没在知识库里匹配到非常具体的项目。别担心——你可以先从这些官方入口开始（能转介/查询），或者换一种说法（例如加上‘住院/诊所/账单’这类关键词）。"
+          : "I couldn’t match a specific scheme in the KB yet. No worries — start from these official entry points (they can refer you), or rephrase with a bit more detail (e.g., ‘clinic/hospital/bills’).",
+      cards: entryPointsCards(lang),
+      quickReplies: makeQuickReplies([
+        { id: "rephrase", label: zh ? "我补充一句细节" : "I’ll add one detail", action: { type: "NOOP" } },
+        ...baseNavQuickReplies(lang),
+        endQuickReply(lang)
+      ])
+    };
+  }
+
+  if (offset >= total) {
+    return noMoreResultsMessage(lang, domainId);
+  }
+
+  const page = matched.slice(offset, offset + pageSize).map(x => x.s);
+  const hasMore = offset + pageSize < total;
+
+  const intro = lowConfidence
+      ? (zh
+          ? `我先给你几个“可能相关”的官方项目（基于：${langPick(lang, domain?.en, domain?.zh)}）。如果方向不对，点“返回主题”就能重来。`
+          : `Here are a few *possibly relevant* official schemes (based on: ${langPick(lang, domain?.en, domain?.zh)}). If this isn’t right, tap “Back to topics”.`)
+      : (zh
+          ? `我找到最相关的官方项目（${langPick(lang, domain?.en, domain?.zh)}）。你想先看“资格”还是“申请步骤”？`
+          : `I found the most relevant official schemes (${langPick(lang, domain?.en, domain?.zh)}). Do you want “Eligibility” or “How to apply” first?`);
+
+  const cards = page.map(s => formatScheme(s, lang, focus));
+
+  const focusChips = [
+    { id: "overview", label: zh ? "概览" : "Overview", action: { type: "SET_FOCUS", focus: "overview" } },
+    { id: "eligibility", label: zh ? "资格" : "Eligibility", action: { type: "SET_FOCUS", focus: "eligibility" } },
+    { id: "steps", label: zh ? "步骤" : "Steps", action: { type: "SET_FOCUS", focus: "steps" } }
+  ];
+
+  if (hasMore) {
+    focusChips.push({ id: "more", label: zh ? "更多结果" : "More results", action: { type: "MORE_RESULTS" } });
+  } else {
+    // optional: you can still allow "More results" to show the noMore message,
+    // but UX-wise it’s cleaner to hide it when there’s no more.
+  }
+
+  return {
+    role: "assistant",
+    text: intro,
+    cards,
+    quickReplies: makeQuickReplies([
+      ...focusChips,
+      ...baseNavQuickReplies(lang),
+      endQuickReply(lang)
+    ])
+  };
+}
+
+function urgentMessage(lang = "en") {
+  const zh = lang === "zh";
+  const text = zh
+      ? "明白，这听起来比较紧急。为了让你马上有可走的下一步，我先给你最直接的官方入口（可转介/联系）。如果你愿意，也可以再说一句：你现在最急的是住房/钱/医疗哪一块？我会把步骤整理成 1-2-3。"
+      : "Got it — this sounds urgent. To help immediately, here are official entry points you can contact first. If you’d like, tell me in one sentence whether this is mainly housing/money/healthcare, and I’ll turn it into a clear 1-2-3 plan.";
+  return {
+    role: "assistant",
+    text,
+    cards: entryPointsCards(lang),
+    quickReplies: makeQuickReplies([
+      ...topicQuickReplies(lang)
+    ])
+  };
+}
+
+function sensitiveMessage(lang = "en") {
+  const zh = lang === "zh";
+  const text = zh
+      ? "谢谢你告诉我。如果你现在有自伤/他伤风险或处在危险中，请立刻联系紧急服务（999）或使用 national mindline 1771（24/7）。如果你愿意，你也可以回我一句：你更想‘有人倾听’还是‘获得转介与下一步’，我会继续帮你。"
+      : "Thanks for telling me. If you’re in immediate danger or at risk of self-harm, contact emergency services (999) or national mindline 1771 (24/7). If you want, tell me whether you prefer ‘someone to talk to’ or ‘referral/next steps’, and I’ll continue.";
+  return {
+    role: "assistant",
+    text,
+    cards: entryPointsCards(lang),
+    quickReplies: topicQuickReplies(lang)
+  };
 }
 
 // ----------------- Public API -----------------
@@ -377,7 +540,9 @@ export function initDialogState(lang = "en") {
     domainId: null,
     focus: "overview",      // overview | eligibility | steps
     lastQuery: "",
-    topK: DEFAULT_TOPK
+    offset: 0,              // pagination offset (avoid duplicates)
+    pageSize: DEFAULT_PAGE_SIZE,
+    ended: false
   };
 }
 
@@ -393,66 +558,24 @@ export function getInitialAssistantMessage(lang = "en") {
   };
 }
 
-function buildResultsMessage({ lang, domainId, focus, query, topK }) {
-  const zh = lang === "zh";
-  const domain = domainById(domainId);
-  const { best, lowConfidence } = retrieveSchemes({ query, domainId, topK });
-
-  if (!best.length) {
-    return {
-      role: "assistant",
-      text: zh
-          ? "我暂时没在知识库里匹配到非常具体的项目。别担心——你可以先从这些官方入口开始（能转介/查询），或者换一种说法（例如加上‘住院/诊所/账单’这类关键词）。"
-          : "I couldn’t match a specific scheme in the KB yet. No worries — start from these official entry points (they can refer you), or rephrase with a bit more detail (e.g., ‘clinic/hospital/bills’).",
-      cards: entryPointsCards(lang),
-      quickReplies: makeQuickReplies([
-        { id: "rephrase", label: zh ? "我补充一句细节" : "I’ll add one detail", action: { type: "NOOP" } },
-        ...baseNavQuickReplies(lang)
-      ])
-    };
-  }
-
-  const intro = lowConfidence
-      ? (zh
-          ? `我先给你几个“可能相关”的官方项目（基于：${langPick(lang, domain?.en, domain?.zh)}）。如果方向不对，点“返回主题”就能重来。`
-          : `Here are a few *possibly relevant* official schemes (based on: ${langPick(lang, domain?.en, domain?.zh)}). If this isn’t right, tap “Back to topics”.`)
-      : (zh
-          ? `我找到最相关的官方项目（${langPick(lang, domain?.en, domain?.zh)}）。你想先看“资格”还是“申请步骤”？`
-          : `I found the most relevant official schemes (${langPick(lang, domain?.en, domain?.zh)}). Do you want “Eligibility” or “How to apply” first?`);
-
-  const cards = best.map(s => formatScheme(s, lang, focus));
-
-  const focusChips = makeQuickReplies([
-    { id: "overview", label: zh ? "概览" : "Overview", action: { type: "SET_FOCUS", focus: "overview" } },
-    { id: "eligibility", label: zh ? "资格" : "Eligibility", action: { type: "SET_FOCUS", focus: "eligibility" } },
-    { id: "steps", label: zh ? "步骤" : "Steps", action: { type: "SET_FOCUS", focus: "steps" } },
-    { id: "more", label: zh ? "更多结果" : "More results", action: { type: "MORE_RESULTS" } },
-    ...baseNavQuickReplies(lang)
-  ]);
-
-  return { role: "assistant", text: intro, cards, quickReplies: focusChips };
-}
-
-function urgentMessage(lang = "en") {
-  const zh = lang === "zh";
-  const text = zh
-      ? "明白，这听起来比较紧急。为了让你马上有可走的下一步，我先给你最直接的官方入口（可转介/联系）。如果你愿意，也可以再说一句：你现在最急的是住房/钱/医疗哪一块？我会把步骤整理成 1-2-3。"
-      : "Got it — this sounds urgent. To help immediately, here are official entry points you can contact first. If you’d like, tell me in one sentence whether this is mainly housing/money/healthcare, and I’ll turn it into a clear 1-2-3 plan.";
-  return { role: "assistant", text, cards: entryPointsCards(lang), quickReplies: topicQuickReplies(lang) };
-}
-
-function sensitiveMessage(lang = "en") {
-  const zh = lang === "zh";
-  const text = zh
-      ? "谢谢你告诉我。如果你现在有自伤/他伤风险或处在危险中，请立刻联系紧急服务（999）或使用 national mindline 1771（24/7）。如果你愿意，你也可以回我一句：你更想‘有人倾听’还是‘获得转介与下一步’，我会继续帮你。"
-      : "Thanks for telling me. If you’re in immediate danger or at risk of self-harm, contact emergency services (999) or national mindline 1771 (24/7). If you want, tell me whether you prefer ‘someone to talk to’ or ‘referral/next steps’, and I’ll continue.";
-  return { role: "assistant", text, cards: entryPointsCards(lang), quickReplies: topicQuickReplies(lang) };
-}
-
 export function handleUserText(state, userText) {
   const lang = state.lang;
   const raw = (userText || "").trim();
   const zh = lang === "zh";
+
+  // If user already ended but types again, revive to start (friendly UX)
+  if (state.ended) {
+    const revived = { ...initDialogState(lang) };
+    return {
+      state: revived,
+      message: {
+        role: "assistant",
+        text: zh ? "好的，我们重新开始。你现在最需要哪一类帮助？" : "Sure — let’s restart. What kind of help do you need?",
+        cards: [],
+        quickReplies: topicQuickReplies(lang)
+      }
+    };
+  }
 
   if (!raw) {
     return {
@@ -470,10 +593,10 @@ export function handleUserText(state, userText) {
 
   // global safety checks
   if (containsAny(raw, SENSITIVE_TRIGGERS)) {
-    return { state: { ...state, step: "choose_domain", domainId: null }, message: sensitiveMessage(lang) };
+    return { state: { ...state, step: "choose_domain", domainId: null, lastQuery: "", offset: 0 }, message: sensitiveMessage(lang) };
   }
   if (containsAny(raw, URGENT_TRIGGERS)) {
-    return { state: { ...state, step: "choose_domain", domainId: null }, message: urgentMessage(lang) };
+    return { state: { ...state, step: "choose_domain", domainId: null, lastQuery: "", offset: 0 }, message: urgentMessage(lang) };
   }
 
   // Detect domain from free-form input
@@ -485,7 +608,7 @@ export function handleUserText(state, userText) {
   if (state.step === "choose_domain") {
     if (detectedDomain) {
       // Let user free-type: auto-advance
-      const next = { ...state, step: "choose_focus", domainId: detectedDomain };
+      const next = { ...state, step: "choose_focus", domainId: detectedDomain, offset: 0 };
       const d = domainById(detectedDomain);
 
       const text = zh
@@ -506,20 +629,32 @@ export function handleUserText(state, userText) {
   // Step: choose_focus
   if (state.step === "choose_focus") {
     const q = raw;
-    const next = { ...state, step: "refine_and_show", lastQuery: q, topK: DEFAULT_TOPK };
-
-    // When user types in choose_focus, we show results directly with current focus
+    const next = { ...state, step: "refine_and_show", lastQuery: q, offset: 0 };
     return {
       state: next,
-      message: buildResultsMessage({ lang, domainId: next.domainId, focus: next.focus, query: q, topK: next.topK })
+      message: buildResultsMessage({
+        lang,
+        domainId: next.domainId,
+        focus: next.focus,
+        query: q,
+        offset: next.offset,
+        pageSize: next.pageSize
+      })
     };
   }
 
   // Step: refine_and_show
-  const next = { ...state, step: "refine_and_show", lastQuery: raw, topK: DEFAULT_TOPK };
+  const next = { ...state, step: "refine_and_show", lastQuery: raw, offset: 0 };
   return {
     state: next,
-    message: buildResultsMessage({ lang, domainId: next.domainId, focus: next.focus, query: next.lastQuery, topK: next.topK })
+    message: buildResultsMessage({
+      lang,
+      domainId: next.domainId,
+      focus: next.focus,
+      query: next.lastQuery,
+      offset: next.offset,
+      pageSize: next.pageSize
+    })
   };
 }
 
@@ -534,8 +669,31 @@ export function handleAction(state, action) {
       const s = initDialogState(lang);
       return { state: s, message: getInitialAssistantMessage(lang) };
     }
+    case "END": {
+      const s = { ...state, ended: true };
+      return { state: s, message: endConversationMessage(lang) };
+    }
+    case "ESCALATE": {
+      // Engine does not implement human handoff, but we emit the action so UI can route it.
+      // We also provide a friendly message.
+      const text = zh
+          ? "好的，我帮你转接人工支持。"
+          : "Okay — I’ll connect you to human support.";
+      return {
+        state,
+        message: {
+          role: "assistant",
+          text,
+          cards: [],
+          quickReplies: makeQuickReplies([
+            ...baseNavQuickReplies(lang),
+            endQuickReply(lang)
+          ])
+        }
+      };
+    }
     case "BACK_TOPICS": {
-      const s = { ...state, step: "choose_domain", domainId: null, lastQuery: "", topK: DEFAULT_TOPK };
+      const s = { ...state, step: "choose_domain", domainId: null, lastQuery: "", offset: 0, ended: false };
       return {
         state: s,
         message: {
@@ -549,16 +707,16 @@ export function handleAction(state, action) {
       };
     }
     case "URGENT": {
-      const s = { ...state, step: "choose_domain", domainId: null, lastQuery: "", topK: DEFAULT_TOPK };
+      const s = { ...state, step: "choose_domain", domainId: null, lastQuery: "", offset: 0, ended: false };
       return { state: s, message: urgentMessage(lang) };
     }
     case "SENSITIVE": {
-      const s = { ...state, step: "choose_domain", domainId: null, lastQuery: "", topK: DEFAULT_TOPK };
+      const s = { ...state, step: "choose_domain", domainId: null, lastQuery: "", offset: 0, ended: false };
       return { state: s, message: sensitiveMessage(lang) };
     }
     case "SET_DOMAIN": {
       const d = domainById(action.domainId);
-      const s = { ...state, step: "choose_focus", domainId: action.domainId, lastQuery: "", topK: DEFAULT_TOPK };
+      const s = { ...state, step: "choose_focus", domainId: action.domainId, lastQuery: "", offset: 0, ended: false };
 
       const text = zh
           ? `${empathyStart(action.domainId, lang)}\n\n好的，我们从「${langPick(lang, d.en, d.zh)}」开始。你想先看哪一类信息？`
@@ -567,12 +725,20 @@ export function handleAction(state, action) {
       return { state: s, message: { role: "assistant", text, cards: [], quickReplies: focusQuickReplies(lang) } };
     }
     case "SET_FOCUS": {
-      const s = { ...state, focus: action.focus || "overview" };
+      // Focus changed => reset pagination to page 1 to avoid confusing jumps
+      const s = { ...state, focus: action.focus || "overview", offset: 0 };
 
       if (s.step === "refine_and_show" && s.lastQuery) {
         return {
           state: s,
-          message: buildResultsMessage({ lang, domainId: s.domainId, focus: s.focus, query: s.lastQuery, topK: s.topK })
+          message: buildResultsMessage({
+            lang,
+            domainId: s.domainId,
+            focus: s.focus,
+            query: s.lastQuery,
+            offset: s.offset,
+            pageSize: s.pageSize
+          })
         };
       }
 
@@ -589,31 +755,47 @@ export function handleAction(state, action) {
     case "ADD_QUERY": {
       const added = (action.text || "").trim();
       const q = state.lastQuery ? `${state.lastQuery} ${added}`.trim() : added;
-      const s = { ...state, step: "refine_and_show", lastQuery: q, topK: DEFAULT_TOPK };
+      const s = { ...state, step: "refine_and_show", lastQuery: q, offset: 0 };
       return {
         state: s,
-        message: buildResultsMessage({ lang, domainId: s.domainId, focus: s.focus, query: s.lastQuery, topK: s.topK })
+        message: buildResultsMessage({
+          lang,
+          domainId: s.domainId,
+          focus: s.focus,
+          query: s.lastQuery,
+          offset: s.offset,
+          pageSize: s.pageSize
+        })
       };
     }
     case "MORE_RESULTS": {
-      const s = { ...state, topK: Math.min((state.topK || DEFAULT_TOPK) + 3, 12) };
-      if (!s.lastQuery) {
+      if (!state.lastQuery) {
         return {
-          state: s,
+          state,
           message: {
             role: "assistant",
             text: zh
                 ? "你先用一句话描述你的需求（例如‘住院账单’/‘租金欠费’/‘诊所补贴’），我才能给你更相关的更多结果。"
                 : "Describe your need in one sentence first (e.g., ‘hospital bill’ / ‘rent arrears’ / ‘clinic subsidy’), and I’ll fetch more relevant results.",
             cards: [],
-            quickReplies: domainPresets(s.domainId, lang)
+            quickReplies: domainPresets(state.domainId, lang)
           }
         };
       }
-      return {
-        state: s,
-        message: buildResultsMessage({ lang, domainId: s.domainId, focus: s.focus, query: s.lastQuery, topK: s.topK })
-      };
+
+      const nextOffset = (state.offset || 0) + (state.pageSize || DEFAULT_PAGE_SIZE);
+      const s = { ...state, offset: nextOffset };
+
+      const msg = buildResultsMessage({
+        lang,
+        domainId: s.domainId,
+        focus: s.focus,
+        query: s.lastQuery,
+        offset: s.offset,
+        pageSize: s.pageSize
+      });
+
+      return { state: s, message: msg };
     }
     case "NOOP":
     default:
