@@ -1,0 +1,5 @@
+export const LANGS = [
+    { code: "en", label: "English" },
+    { code: "zh", label: "中文" }
+];
+

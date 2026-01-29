@@ -1,8 +1,6 @@
 export const UI = {
     en: {
         title: "Social Good Assistant (Singapore)",
-        subtitle:
-            "Simple keywords → guided questions → plain-language guidance → optional human escalation.",
         placeholder:
             'Type a keyword (e.g., "financial aid", "housing grant", "medical help")...',
         send: "Send",
@@ -20,8 +18,15 @@ export const UI = {
         cancel: "Cancel",
         ticketCreated: "Ticket created. A caseworker will follow up.",
         emptyPanel: "Recommendations will appear here after the guided questions.",
+        reset: "Reset",
+        urgent: "Urgent help",
+        // accessibility toggles
+        largeText: "Large text",
+        normalText: "Normal text",
+        highContrast: "High contrast",
+        standardContrast: "Standard contrast",
 
-        // ✅ dynamic system messages (fix language switching)
+        // dynamic system messages (fix language switching)
         welcome:
             'Hi! Type a simple keyword like "financial aid", "housing grant", "medical help", or "support for seniors". I’ll ask a few questions, then provide plain-language guidance and suggest human escalation when needed.',
         resetHint:
@@ -30,7 +35,6 @@ export const UI = {
 
     zh: {
         title: "社会公益对话助手（新加坡）",
-        subtitle: "输入简单关键词 → 引导追问 → 简化指引 → 必要时转人工。",
         placeholder: "输入关键词（例如：经济援助 / 住房补助 / 医疗补贴）…",
         send: "发送",
         language: "语言",
@@ -46,6 +50,13 @@ export const UI = {
         cancel: "取消",
         ticketCreated: "工单已创建，工作人员将联系你。",
         emptyPanel: "完成引导问题后，这里会显示推荐结果。",
+        reset: "重置",
+        urgent: "紧急求助",
+        // accessibility toggles
+        largeText: "大字体",
+        normalText: "标准字体",
+        highContrast: "高对比",
+        standardContrast: "标准对比",
 
         // ✅ dynamic system messages (fix language switching)
         welcome:
